@@ -51,7 +51,15 @@ static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
 void led_blinking_task(void);
 void hid_task(void);
-
+void cdc_task(void) {
+    if ( tud_cdc_connected() && tud_cdc_available() ) {
+        uint8_t buf[64];
+        uint32_t count = tud_cdc_read(buf, sizeof(buf));
+        // 这里可以处理收到的数据
+        tud_cdc_write(buf, count); // 回显
+        tud_cdc_write_flush();
+    }
+}
 /*------------- MAIN -------------*/
 int main(void)
 {
@@ -70,6 +78,7 @@ int main(void)
     led_blinking_task();
 
     hid_task();
+    cdc_task();
   }
 }
 
