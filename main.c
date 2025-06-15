@@ -226,12 +226,18 @@ static void send_hid_report(uint8_t report_id, uint32_t btn)
 // main.c 片段
 void hid_task(void)
 {
+  // static uint32_t start_ms = 0;
+  // if (board_millis() - start_ms < 10) return;
+  // start_ms += 10;
+
+  // if (!tud_hid_ready()) return;
+  // tud_hid_mouse_report(REPORT_ID_MOUSE, 0, 5, 5, 0, 0);
   static uint32_t start_ms = 0;
   if (board_millis() - start_ms < 10) return;
   start_ms += 10;
 
   if (!tud_hid_ready()) return;
-  tud_hid_mouse_report(REPORT_ID_MOUSE, 0, 5, 5, 0, 0);
+  //tud_hid_mouse_report(REPORT_ID_MOUSE, 0, -1, 0, 0, 0);
 }
 
 
