@@ -37,23 +37,31 @@ pico_sdk_init()
 
 cmake_minimum_required(VERSION 3.13)
 
-add_executable(dev_hid_composite)
-
-target_sources(dev_hid_composite PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}/main.c
-        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
-        )
+add_executable(dev_hid_composite
+    main.c
+    usb_descriptors.c
+    # hello_usb.c  // 如果你有 hello_usb.c 也可以加进来
+)
 
 # Make sure TinyUSB can find tusb_config.h
 target_include_directories(dev_hid_composite PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR})
+    ${CMAKE_CURRENT_LIST_DIR}
+)
 
 # In addition to pico_stdlib required for common PicoSDK functionality, add dependency on tinyusb_device
 # for TinyUSB device support and tinyusb_board for the additional board support library used by the example
-target_link_libraries(dev_hid_composite PUBLIC pico_stdlib pico_unique_id tinyusb_device tinyusb_board)
+target_link_libraries(dev_hid_composite
+    pico_stdlib
+    pico_unique_id
+    tinyusb_device
+    tinyusb_board
+)
 
-# Uncomment this line to enable fix for Errata RP2040-E5 (the fix requires use of GPIO 15)
-#target_compile_definitions(dev_hid_composite PUBLIC PICO_RP2040_USB_DEVICE_ENUMERATION_FIX=1)
+# 如果你需要自定义VID/PID，可以这样设置（可选）
+target_compile_definitions(dev_hid_composite PRIVATE
+    CFG_TUD_VENDOR_ID=0x046D
+    CFG_TUD_PRODUCT_ID=0xC077
+)
 
 pico_add_extra_outputs(dev_hid_composite)
 

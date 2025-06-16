@@ -27,6 +27,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "pico/stdlib.h"
+
 #include "bsp/board_api.h"
 #include "tusb.h"
 
@@ -46,17 +48,30 @@ enum  {
   BLINK_MOUNTED = 1000,
   BLINK_SUSPENDED = 2500,
 };
-
+static uint32_t mouse_move_x = 0;
+static uint32_t mouse_move_y = 0;
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
 void led_blinking_task(void);
 void hid_task(void);
-
+void cdc_task(void)
+{
+  if ( tud_cdc_available() )
+  {
+    uint8_t buf[64];
+    uint32_t count = tud_cdc_read(buf, sizeof(buf));
+    if (count > 0) {
+      mouse_move_x = count;
+      tud_cdc_write(buf, count);      // 回显收到的数据
+      tud_cdc_write_flush();
+    }
+  }
+}
 /*------------- MAIN -------------*/
 int main(void)
 {
   board_init();
-
+  stdio_init_all();
   // init device stack on configured roothub port
   tud_init(BOARD_TUD_RHPORT);
 
@@ -70,6 +85,7 @@ int main(void)
     led_blinking_task();
 
     hid_task();
+    cdc_task();
   }
 }
 
@@ -237,7 +253,14 @@ void hid_task(void)
   start_ms += 10;
 
   if (!tud_hid_ready()) return;
-  //tud_hid_mouse_report(REPORT_ID_MOUSE, 0, -1, 0, 0, 0);
+  tud_hid_mouse_report(REPORT_ID_MOUSE, 0, mouse_move_x, 0, 0, 0);
+  mouse_move_x = 0; // 重置鼠标移动量
+  // int ch = getchar_timeout_us(0); // 非阻塞读取
+  //       if (ch != PICO_ERROR_TIMEOUT) {
+  //           printf("Received: %c\n", ch);
+  //           tud_hid_mouse_report(REPORT_ID_MOUSE, 0, -1, 0, 0, 0);
+  //       }
+        //sleep_ms(10);
 }
 
 
