@@ -48,24 +48,54 @@ enum  {
   BLINK_MOUNTED = 1000,
   BLINK_SUSPENDED = 2500,
 };
+
+static volatile struct {
+    uint8_t buttons;
+    int8_t x;
+    int8_t y;
+    int8_t wheel;
+    int8_t pan;
+    bool has_data;
+} mouse_cmd = {0};
+
+
 static uint32_t mouse_move_x = 0;
 static uint32_t mouse_move_y = 0;
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
+
+
 void led_blinking_task(void);
 void hid_task(void);
+// CDC任务：接收并解析串口协议
 void cdc_task(void)
 {
-  if ( tud_cdc_available() )
-  {
-    uint8_t buf[64];
-    uint32_t count = tud_cdc_read(buf, sizeof(buf));
-    if (count > 0) {
-      mouse_move_x = count;
-      tud_cdc_write(buf, count);      // 回显收到的数据
-      tud_cdc_write_flush();
+    if ( tud_cdc_available() )
+    {
+        char buf[64] = {0};
+        uint32_t count = tud_cdc_read(buf, sizeof(buf)-1);
+        if (count > 0) {
+            // 协议：55 btn x y wheel pan sum
+            int head, btn, x, y, wheel, pan, sum;
+            if (sscanf(buf, "%d %d %d %d %d %d %d", &head, &btn, &x, &y, &wheel, &pan, &sum) == 7) {
+                int calc_sum = btn + x + y + wheel + pan;
+                if (head == 55 && calc_sum == sum) {
+                    mouse_cmd.buttons = (uint8_t)btn;
+                    mouse_cmd.x = (int8_t)x;
+                    mouse_cmd.y = (int8_t)y;
+                    mouse_cmd.wheel = (int8_t)wheel;
+                    mouse_cmd.pan = (int8_t)pan;
+                    mouse_cmd.has_data = true;
+                    tud_cdc_write_str("ok\n");
+                } else {
+                    tud_cdc_write_str("protocol error\n");
+                }
+            } else {
+                tud_cdc_write_str("format error\n");
+            }
+            tud_cdc_write_flush();
+        }
     }
-  }
 }
 /*------------- MAIN -------------*/
 int main(void)
@@ -253,8 +283,11 @@ void hid_task(void)
   start_ms += 10;
 
   if (!tud_hid_ready()) return;
-  tud_hid_mouse_report(REPORT_ID_MOUSE, 0, mouse_move_x, 0, 0, 0);
-  mouse_move_x = 0; // 重置鼠标移动量
+  if (mouse_cmd.has_data)
+  {
+    tud_hid_mouse_report(REPORT_ID_MOUSE, mouse_cmd.buttons, mouse_cmd.x, mouse_cmd.y, mouse_cmd.wheel, mouse_cmd.pan);
+    mouse_cmd.has_data = false;
+  }
   // int ch = getchar_timeout_us(0); // 非阻塞读取
   //       if (ch != PICO_ERROR_TIMEOUT) {
   //           printf("Received: %c\n", ch);
