@@ -34,6 +34,14 @@
 
 #include "usb_descriptors.h"
 
+#include "pico/multicore.h"
+
+extern void mpu6500Task();
+void core1_task() {
+    
+  mpu6500Task();
+}
+
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTYPES
 //--------------------------------------------------------------------+
@@ -108,7 +116,7 @@ int main(void)
   if (board_init_after_tusb) {
     board_init_after_tusb();
   }
-
+  multicore_launch_core1(core1_task);
   while (1)
   {
     tud_task(); // tinyusb device task
@@ -270,6 +278,7 @@ static void send_hid_report(uint8_t report_id, uint32_t btn)
 //   }
 // }
 // main.c 片段
+extern int16_t gyroChanged[3];
 void hid_task(void)
 {
   // static uint32_t start_ms = 0;
@@ -283,10 +292,29 @@ void hid_task(void)
   start_ms += 10;
 
   if (!tud_hid_ready()) return;
-  if (mouse_cmd.has_data)
-  {
+  if (mouse_cmd.has_data){
     tud_hid_mouse_report(REPORT_ID_MOUSE, mouse_cmd.buttons, mouse_cmd.x, mouse_cmd.y, mouse_cmd.wheel, mouse_cmd.pan);
     mouse_cmd.has_data = false;
+  }
+  else{
+    int8_t x = 0, y = 0;
+    if(gyroChanged[0] > 10000)
+    {
+      x = 10;
+    }
+    else if(gyroChanged[0] < -10000)
+    {
+      x = -10;
+    }
+    if(gyroChanged[1] > 10000)
+    {
+      y = 10;
+    }
+    else if(gyroChanged[1] < -10000)
+    {
+      y = -10;
+    }
+    tud_hid_mouse_report(REPORT_ID_MOUSE, 0, x, y, 0, 0);
   }
   // int ch = getchar_timeout_us(0); // 非阻塞读取
   //       if (ch != PICO_ERROR_TIMEOUT) {

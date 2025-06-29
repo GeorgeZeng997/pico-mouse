@@ -40,6 +40,7 @@ cmake_minimum_required(VERSION 3.13)
 add_executable(dev_hid_composite
     main.c
     usb_descriptors.c
+    mpu9250_spi.c
     # hello_usb.c  // 如果你有 hello_usb.c 也可以加进来
 )
 
@@ -53,8 +54,10 @@ target_include_directories(dev_hid_composite PUBLIC
 target_link_libraries(dev_hid_composite
     pico_stdlib
     pico_unique_id
+    pico_multicore
     tinyusb_device
     tinyusb_board
+    hardware_spi
 )
 
 # 如果你需要自定义VID/PID，可以这样设置（可选）
