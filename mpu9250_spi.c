@@ -9,6 +9,7 @@
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
 #include "hardware/spi.h"
+#include "tusb.h"
 
 /* Example code to talk to a MPU9250 MEMS accelerometer and gyroscope.
    Ignores the magnetometer, that is left as a exercise for the reader.
@@ -78,10 +79,10 @@ static void read_registers(uint8_t reg, uint8_t *buf, uint16_t len) {
     reg |= READ_BIT;
     cs_select();
     spi_write_blocking(SPI_PORT, &reg, 1);
-    sleep_ms(10);
+    sleep_us(100);  // 从10ms改为100us，大幅提高SPI通信速度
     spi_read_blocking(SPI_PORT, 0, buf, len);
     cs_deselect();
-    sleep_ms(10);
+    sleep_us(100);  // 从10ms改为100us
 }
 
 
@@ -108,13 +109,21 @@ static void mpu9250_read_raw(int16_t accel[3], int16_t gyro[3], int16_t *temp) {
     *temp = buffer[0] << 8 | buffer[1];
 }
 int16_t gyroChanged[3];
+int16_t accelChanged[3];
 void mpu6500Task() {
     //stdio_init_all();
 
-    printf("Hello, MPU9250! Reading raw data from registers via SPI...\n");
+    // Wait for CDC to be ready
+    // while (!tud_cdc_connected()) {
+    //     sleep_ms(100);
+    // }
 
-    // This example will use SPI0 at 0.5MHz.
-    spi_init(SPI_PORT, 500 * 1000);
+    // Send initialization message via CDC
+    tud_cdc_write_str("Hello, MPU9250! Reading raw data from registers via SPI...\n");
+    tud_cdc_write_flush();
+
+    // This example will use SPI0 at 1MHz (提高从0.5MHz到1MHz)
+    spi_init(SPI_PORT, 1000 * 1000);
     gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
     gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
@@ -133,7 +142,11 @@ void mpu6500Task() {
     // See if SPI is working - interrograte the device for its I2C ID number, should be 0x71
     uint8_t id;
     read_registers(0x75, &id, 1);
-    printf("I2C address is 0x%x\n", id);
+    
+    char msg_buf[64];
+    snprintf(msg_buf, sizeof(msg_buf), "I2C address is 0x%x\n", id);
+    tud_cdc_write_str(msg_buf);
+    tud_cdc_write_flush();
 
     int16_t acceleration[3], gyro[3], temp;
 
@@ -142,12 +155,14 @@ void mpu6500Task() {
 
         // These are the raw numbers from the chip, so will need tweaking to be really useful.
         // See the datasheet for more information
-        printf("Acc. X = %d, Y = %d, Z = %d\n", acceleration[0], acceleration[1], acceleration[2]);
-        printf("Gyro. X = %d, Y = %d, Z = %d\n", gyro[0], gyro[1], gyro[2]);
-        // Temperature is simple so use the datasheet calculation to get deg C.
-        // Note this is chip temperature.
-        printf("Temp. = %f\n", (temp / 340.0) + 36.53);
+        char data_buf[256];
+        snprintf(data_buf, sizeof(data_buf), 
+                 "acc. X = %d, Y = %d, Z = %d\n",
+                 acceleration[0], acceleration[1], acceleration[2]);
+        tud_cdc_write_str(data_buf);
+        tud_cdc_write_flush();
+        memcpy(accelChanged, acceleration, sizeof(accelChanged));
         memcpy(gyroChanged, gyro, sizeof(gyroChanged));
-        sleep_ms(100);
+        sleep_ms(1);  // 从10ms改为1ms，提高读取速度到1000Hz
     }
 }

@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "pico/stdlib.h"
 
@@ -110,6 +111,10 @@ int main(void)
 {
   board_init();
   stdio_init_all();
+  
+  // 初始化随机数种子
+  srand(time(NULL));
+  
   // init device stack on configured roothub port
   tud_init(BOARD_TUD_RHPORT);
 
@@ -279,6 +284,7 @@ static void send_hid_report(uint8_t report_id, uint32_t btn)
 // }
 // main.c 片段
 extern int16_t gyroChanged[3];
+extern int16_t accelChanged[3];
 void hid_task(void)
 {
   // static uint32_t start_ms = 0;
@@ -288,8 +294,8 @@ void hid_task(void)
   // if (!tud_hid_ready()) return;
   // tud_hid_mouse_report(REPORT_ID_MOUSE, 0, 5, 5, 0, 0);
   static uint32_t start_ms = 0;
-  if (board_millis() - start_ms < 10) return;
-  start_ms += 10;
+  if (board_millis() - start_ms < 1) return;  // 从10ms改为1ms，提高鼠标响应速度到1000Hz
+  start_ms += 1;
 
   if (!tud_hid_ready()) return;
   if (mouse_cmd.has_data){
@@ -298,23 +304,30 @@ void hid_task(void)
   }
   else{
     int8_t x = 0, y = 0;
-    if(gyroChanged[0] > 10000)
+    if(accelChanged[0] > 5000)
     {
-      x = 10;
+      x = -10 - (accelChanged[0] / 100 - 50);
     }
-    else if(gyroChanged[0] < -10000)
+    else if(accelChanged[0] < -5000)
     {
-      x = -10;
+      x = 10 + (abs(accelChanged[0]) / 100 - 50);
     }
-    if(gyroChanged[1] > 10000)
+    if(accelChanged[1] > 5000)
     {
-      y = 10;
+      y = 10 + (accelChanged[1] / 100 - 50);
     }
-    else if(gyroChanged[1] < -10000)
+    else if(accelChanged[1] < -5000)
     {
-      y = -10;
+      y = -10 - (abs(accelChanged[1]) / 100 - 50);
     }
-    tud_hid_mouse_report(REPORT_ID_MOUSE, 0, x, y, 0, 0);
+    if(x!=0 || y!=0)
+    {
+        // 添加-5到+5的随机数
+        int8_t rand_x = (rand() % 11) - 5;  // 生成-5到+5的随机数
+        int8_t rand_y = (rand() % 11) - 5;
+        tud_hid_mouse_report(REPORT_ID_MOUSE, 0, x + rand_x, y + rand_y, 0, 0);
+    }
+    memset(accelChanged, 0, sizeof(accelChanged)); // 清除加速度计数据
   }
   // int ch = getchar_timeout_us(0); // 非阻塞读取
   //       if (ch != PICO_ERROR_TIMEOUT) {
