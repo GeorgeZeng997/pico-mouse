@@ -154,7 +154,7 @@ void cdc_task(void)
         char buf[64] = {0};
         uint32_t count = tud_cdc_read(buf, sizeof(buf)-1);
         if (count > 0) {
-            // 协议：55 btn x y wheel pan sum
+              // 协议：55 btn x y wheel pan sum
             int head, btn, x, y, wheel, pan, sum;
             if (sscanf(buf, "%d %d %d %d %d %d %d", &head, &btn, &x, &y, &wheel, &pan, &sum) == 7) {
                 int calc_sum = btn + x + y + wheel + pan;
@@ -464,13 +464,14 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_
 {
   (void) instance;
   (void) len;
-
-  uint8_t next_report_id = report[0] + 1u;
-
-  if (next_report_id < REPORT_ID_COUNT)
-  {
-    send_hid_report(next_report_id, board_button_read());
-  }
+  (void) report;
+  
+  // 注释掉自动发送链，只在需要时手动发送
+  // uint8_t next_report_id = report[0] + 1u;
+  // if (next_report_id < REPORT_ID_COUNT)
+  // {
+  //   send_hid_report(next_report_id, board_button_read());
+  // }
 }
 
 // Invoked when received GET_REPORT control request

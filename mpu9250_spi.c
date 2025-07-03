@@ -156,9 +156,7 @@ void mpu6500Task() {
         // These are the raw numbers from the chip, so will need tweaking to be really useful.
         // See the datasheet for more information
         char data_buf[256];
-        snprintf(data_buf, sizeof(data_buf), 
-                 "acc. X = %d, Y = %d, Z = %d\n",
-                 acceleration[0], acceleration[1], acceleration[2]);
+        //snprintf(data_buf, sizeof(data_buf), "acc. X = %d, Y = %d, Z = %d\n",acceleration[0], acceleration[1], acceleration[2]);
         tud_cdc_write_str(data_buf);
         tud_cdc_write_flush();
         memcpy(accelChanged, acceleration, sizeof(accelChanged));
