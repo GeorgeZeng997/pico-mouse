@@ -29,23 +29,22 @@
 #include <time.h>
 
 #include "pico/stdlib.h"
+#include "hardware/adc.h"
+#include "hardware/gpio.h"
 
 #include "bsp/board_api.h"
 #include "tusb.h"
 
 #include "usb_descriptors.h"
 
-#include "pico/multicore.h"
-
-extern void mpu6500Task();
-void core1_task() {
-    
-  mpu6500Task();
-}
-
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTYPES
 //--------------------------------------------------------------------+
+
+// 摇杆ADC引脚定义
+#define JOYSTICK_X_PIN 26    // ADC0 - GPIO26
+#define JOYSTICK_Y_PIN 27    // ADC1 - GPIO27
+#define MOUSE_BUTTON_PIN 28  // GPIO28 - 数字输入
 
 /* Blink pattern
  * - 250 ms  : device not mounted
@@ -72,6 +71,77 @@ static uint32_t mouse_move_x = 0;
 static uint32_t mouse_move_y = 0;
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
+// CDC命令阻塞摇杆控制的时间
+static uint32_t cdc_command_time = 0;
+static const uint32_t CDC_BLOCK_TIMEOUT = 500;  // 500ms
+
+// 灵敏度调节相关变量
+static uint8_t sensitivity_level = 2;  // 默认灵敏度等级 (1-3, 2为中等灵敏度)
+static uint32_t last_button_press_time = 0;
+static uint8_t button_press_count = 0;
+static const uint32_t BUTTON_PRESS_TIMEOUT = 1000;  // 1秒超时
+
+// 灵敏度等级对应的除数 (值越小越灵敏)
+static const uint8_t sensitivity_divisors[] = {5, 10, 30};  // 3个等级: 高/中/低灵敏度
+
+// 摇杆初始化函数
+void joystick_init(void) {
+    // 初始化ADC
+    adc_init();
+    
+    // 初始化ADC引脚
+    adc_gpio_init(JOYSTICK_X_PIN);
+    adc_gpio_init(JOYSTICK_Y_PIN);
+    
+    // 初始化按键引脚
+    gpio_init(MOUSE_BUTTON_PIN);
+    gpio_set_dir(MOUSE_BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(MOUSE_BUTTON_PIN);  // 上拉，按下时为低电平
+}
+
+// 读取摇杆值
+void read_joystick(int8_t *x, int8_t *y, uint8_t *button) {
+    // 读取X轴 (ADC0)
+    adc_select_input(0);
+    uint16_t x_raw = adc_read();
+    
+    // 读取Y轴 (ADC1) 
+    adc_select_input(1);
+    uint16_t y_raw = adc_read();
+    
+    // 读取按键状态
+    *button = !gpio_get(MOUSE_BUTTON_PIN);  // 取反，因为使用上拉
+    
+    // 将ADC值(0-4095)转换为鼠标移动值(-127到+127)
+    // 2048是中心位置
+    const uint16_t center = 2048;
+    const uint16_t deadzone = 100;  // 死区，避免漂移
+    
+    // X轴处理
+    if (x_raw > center + deadzone) {
+        *x = (int8_t)((x_raw - center - deadzone) * 127 / (4095 - center - deadzone));
+    } else if (x_raw < center - deadzone) {
+        *x = (int8_t)((x_raw - center + deadzone) * 127 / (center - deadzone));
+    } else {
+        *x = 0;
+    }
+    
+    // Y轴处理 (反转方向)
+    if (y_raw > center + deadzone) {
+        *y = (int8_t)((y_raw - center - deadzone) * 127 / (4095 - center - deadzone));
+    } else if (y_raw < center - deadzone) {
+        *y = (int8_t)((y_raw - center + deadzone) * 127 / (center - deadzone));
+    } else {
+        *y = 0;
+    }
+    
+    // 限制在合理范围内
+    if (*x > 127) *x = 127;
+    if (*x < -127) *x = -127;
+    if (*y > 127) *y = 127;
+    if (*y < -127) *y = -127;
+}
+
 
 
 void led_blinking_task(void);
@@ -95,6 +165,7 @@ void cdc_task(void)
                     mouse_cmd.wheel = (int8_t)wheel;
                     mouse_cmd.pan = (int8_t)pan;
                     mouse_cmd.has_data = true;
+                    cdc_command_time = board_millis();  // 记录CDC命令时间
                     tud_cdc_write_str("ok\n");
                 } else {
                     tud_cdc_write_str("protocol error\n");
@@ -115,13 +186,16 @@ int main(void)
   // 初始化随机数种子
   srand(time(NULL));
   
+  // 初始化摇杆
+  joystick_init();
+  
   // init device stack on configured roothub port
   tud_init(BOARD_TUD_RHPORT);
 
   if (board_init_after_tusb) {
     board_init_after_tusb();
   }
-  multicore_launch_core1(core1_task);
+  //multicore_launch_core1(core1_task);
   while (1)
   {
     tud_task(); // tinyusb device task
@@ -283,8 +357,7 @@ static void send_hid_report(uint8_t report_id, uint32_t btn)
 //   }
 // }
 // main.c 片段
-extern int16_t gyroChanged[3];
-extern int16_t accelChanged[3];
+
 void hid_task(void)
 {
   // static uint32_t start_ms = 0;
@@ -294,47 +367,93 @@ void hid_task(void)
   // if (!tud_hid_ready()) return;
   // tud_hid_mouse_report(REPORT_ID_MOUSE, 0, 5, 5, 0, 0);
   static uint32_t start_ms = 0;
-  if (board_millis() - start_ms < 1) return;  // 从10ms改为1ms，提高鼠标响应速度到1000Hz
+  if (board_millis() - start_ms < 1) return; 
   start_ms += 1;
 
   if (!tud_hid_ready()) return;
+  
+  // 优先处理CDC命令
   if (mouse_cmd.has_data){
-    tud_hid_mouse_report(REPORT_ID_MOUSE, mouse_cmd.buttons, mouse_cmd.x, mouse_cmd.y, mouse_cmd.wheel, mouse_cmd.pan);
+    // 添加-5到+5的随机数
+    int8_t rand_x = (rand() % 2) - 2 + mouse_cmd.x * 0.03;  // 生成-1到+1的随机数
+    int8_t rand_y = (rand() % 2) - 2 + mouse_cmd.y * 0.03;  // 生成-1到+1的随机数
+    tud_hid_mouse_report(REPORT_ID_MOUSE, mouse_cmd.buttons, mouse_cmd.x + rand_x, mouse_cmd.y + rand_y, mouse_cmd.wheel, mouse_cmd.pan);
     mouse_cmd.has_data = false;
   }
   else{
-    int8_t x = 0, y = 0;
-    if(accelChanged[0] > 5000)
-    {
-      x = -10 - (accelChanged[0] / 100 - 50);
+    // 检查是否在CDC命令阻塞期间（500ms内不处理摇杆）
+    uint32_t current_time = board_millis();
+    if (current_time - cdc_command_time < CDC_BLOCK_TIMEOUT) {
+        return;  // 跳过摇杆处理
     }
-    else if(accelChanged[0] < -5000)
-    {
-      x = 10 + (abs(accelChanged[0]) / 100 - 50);
+
+    // 读取摇杆输入
+    int8_t joystick_x, joystick_y;
+    uint8_t button_state;
+    read_joystick(&joystick_x, &joystick_y, &button_state);
+    
+    // 处理按键长按调节灵敏度
+    static uint8_t last_button_state = 0;
+    static uint32_t button_press_start_time = 0;
+    static bool sensitivity_changed = false;
+    
+    // 检测按键按下边沿
+    if (button_state && !last_button_state) {
+        button_press_start_time = current_time;
+        sensitivity_changed = false;
     }
-    if(accelChanged[1] > 5000)
-    {
-      y = 10 + (accelChanged[1] / 100 - 50);
+    // 检测按键长按（1秒）
+    else if (button_state && !sensitivity_changed && 
+             (current_time - button_press_start_time >= BUTTON_PRESS_TIMEOUT)) {
+        sensitivity_level++;
+        if (sensitivity_level > 3) sensitivity_level = 1;  // 循环回到最高灵敏度
+        sensitivity_changed = true;
+        
     }
-    else if(accelChanged[1] < -5000)
-    {
-      y = -10 - (abs(accelChanged[1]) / 100 - 50);
+    last_button_state = button_state;
+    
+    // 使用当前灵敏度等级缩放摇杆输入
+    uint8_t current_divisor = sensitivity_divisors[sensitivity_level - 1];
+    int8_t mouse_x = joystick_x / current_divisor;
+    int8_t mouse_y;
+    
+    // 只在高灵敏度（等级1）时降低Y轴灵敏度
+    if (sensitivity_level == 1 || sensitivity_level == 2) {
+        mouse_y = joystick_y / (current_divisor * 4);  // Y轴灵敏度降低
+    } else {
+        mouse_y = joystick_y / current_divisor;  // 其他等级Y轴与X轴相同
     }
-    if(x!=0 || y!=0)
-    {
-        // 添加-5到+5的随机数
-        int8_t rand_x = (rand() % 11) - 5;  // 生成-5到+5的随机数
-        int8_t rand_y = (rand() % 11) - 5;
-        tud_hid_mouse_report(REPORT_ID_MOUSE, 0, x + rand_x, y + rand_y, 0, 0);
+    
+    // 如果有移动，发送鼠标报告（灵敏度调节时不发送按键）
+    if (mouse_x != 0 || mouse_y != 0) {
+        tud_hid_mouse_report(REPORT_ID_MOUSE, 0, mouse_x, mouse_y, 0, 0);
     }
-    memset(accelChanged, 0, sizeof(accelChanged)); // 清除加速度计数据
+    // 普通按键功能（非灵敏度调节时）
+    else if (button_state && !sensitivity_changed) {
+        tud_hid_mouse_report(REPORT_ID_MOUSE, 1, 0, 0, 0, 0);  // 左键
+    }
+    
+    // 暂时注释掉ADC调试打印
+    /*
+    // 同时也打印ADC调试信息（减少频率）
+    static uint32_t debug_ms = 0;
+    if (board_millis() - debug_ms > 200) {  // 每200ms打印一次调试信息
+        debug_ms = board_millis();
+        
+        // 读取原始ADC值
+        adc_select_input(0);
+        uint16_t x_raw = adc_read();
+        adc_select_input(1);
+        uint16_t y_raw = adc_read();
+        
+        char debug_buf[128];
+        snprintf(debug_buf, sizeof(debug_buf), "ADC X:%d Y:%d | Joy X:%d Y:%d | Mouse X:%d Y:%d Btn:%d\n", 
+                 x_raw, y_raw, joystick_x, joystick_y, mouse_x, mouse_y, button_state);
+        tud_cdc_write_str(debug_buf);
+        tud_cdc_write_flush();
+    }
+    */
   }
-  // int ch = getchar_timeout_us(0); // 非阻塞读取
-  //       if (ch != PICO_ERROR_TIMEOUT) {
-  //           printf("Received: %c\n", ch);
-  //           tud_hid_mouse_report(REPORT_ID_MOUSE, 0, -1, 0, 0, 0);
-  //       }
-        //sleep_ms(10);
 }
 
 
