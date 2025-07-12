@@ -8,159 +8,218 @@
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
-#include "hardware/spi.h"
+#include "hardware/gpio.h"
+#include "bsp/board_api.h"
 #include "tusb.h"
 
-/* Example code to talk to a MPU9250 MEMS accelerometer and gyroscope.
-   Ignores the magnetometer, that is left as a exercise for the reader.
-
-   This is taking to simple approach of simply reading registers. It's perfectly
-   possible to link up an interrupt line and set things up to read from the
-   inbuilt FIFO to make it more useful.
-
-   NOTE: Ensure the device is capable of being driven at 3.3v NOT 5v. The Pico
-   GPIO (and therefore SPI) cannot be used at 5v.
-
-   You will need to use a level shifter on the I2C lines if you want to run the
-   board at 5v.
-
-   Connections on Raspberry Pi Pico board and a generic MPU9250 board, other
-   boards may vary.
-
-   GPIO 4 (pin 6) MISO/spi0_rx-> ADO on MPU9250 board
-   GPIO 5 (pin 7) Chip select -> NCS on MPU9250 board
-   GPIO 6 (pin 9) SCK/spi0_sclk -> SCL on MPU9250 board
-   GPIO 7 (pin 10) MOSI/spi0_tx -> SDA on MPU9250 board
-   3.3v (pin 36) -> VCC on MPU9250 board
-   GND (pin 38)  -> GND on MPU9250 board
-
-   Note: SPI devices can have a number of different naming schemes for pins. See
-   the Wikipedia page at https://en.wikipedia.org/wiki/Serial_Peripheral_Interface
-   for variations.
-   The particular device used here uses the same pins for I2C and SPI, hence the
-   using of I2C names
+/* Example code to talk to a PAW3205 optical mouse sensor.
+   
+   This uses a custom SPI-like protocol specific to the PAW3205 sensor.
+   The PAW3205 uses a single bidirectional data line (SDIO) and a clock line (SCLK).
+   
+   Connections on Raspberry Pi Pico board and PAW3205 sensor board:
+   GPIO 4 (pin 6) -> SCLK on PAW3205 board
+   GPIO 5 (pin 7) -> SDIO on PAW3205 board  
+   GPIO 6 (pin 9) -> MOTSWK on PAW3205 board (optional, for motion detection)
+   3.3v (pin 36) -> VCC on PAW3205 board
+   GND (pin 38)  -> GND on PAW3205 board
 */
 
-#define PIN_MISO 4
-#define PIN_CS   5
-#define PIN_SCK  6
-#define PIN_MOSI 7
+// PAW3205 引脚定义
+#define PIN_SCLK  4
+#define PIN_SDIO  5
+#define PIN_MOTSWK 6
 
-#define SPI_PORT spi0
-#define READ_BIT 0x80
+// PAW3205 寄存器地址
+#define PROD_ID1 0x00
+#define PROD_ID2 0x01
+#define MOTION_STATUS 0x02
+#define DEL_X 0x03
+#define DEL_Y 0x04
+#define OP_MODE 0x05
+#define CONF 0x06
+#define IMG_QUALITY 0x07
+#define OP_STATE 0x08
+#define W_PROTECT 0x09
+#define SLEEP1_SET 0x0A
+#define ENTER_TIME 0x0B
+#define SLEEP2_SET 0x0C
+#define IMG_THRESHOLD 0x0D
+#define IMG_RECOG 0x0E
 
-static inline void cs_select() {
-    asm volatile("nop \n nop \n nop");
-    gpio_put(PIN_CS, 0);  // Active low
-    asm volatile("nop \n nop \n nop");
-}
+#define NO_SLEEP 0xA0
 
-static inline void cs_deselect() {
-    asm volatile("nop \n nop \n nop");
-    gpio_put(PIN_CS, 1);
-    asm volatile("nop \n nop \n nop");
-}
+// 函数声明
+void paw3205_init(void);
+uint8_t paw3205_read_register(uint8_t address);
+void paw3205_write_register(uint8_t address, uint8_t data);
+void paw3205_read_motion(int8_t *delta_x, int8_t *delta_y, uint8_t *motion_status);
 
-static void mpu9250_reset() {
-    // Two byte reset. First byte register, second byte data
-    // There are a load more options to set up the device in different ways that could be added here
-    uint8_t buf[] = {0x6B, 0x00};
-    cs_select();
-    spi_write_blocking(SPI_PORT, buf, 2);
-    cs_deselect();
-}
-
-
-static void read_registers(uint8_t reg, uint8_t *buf, uint16_t len) {
-    // For this particular device, we send the device the register we want to read
-    // first, then subsequently read from the device. The register is auto incrementing
-    // so we don't need to keep sending the register we want, just the first.
-
-    reg |= READ_BIT;
-    cs_select();
-    spi_write_blocking(SPI_PORT, &reg, 1);
-    sleep_us(100);  // 从10ms改为100us，大幅提高SPI通信速度
-    spi_read_blocking(SPI_PORT, 0, buf, len);
-    cs_deselect();
-    sleep_us(100);  // 从10ms改为100us
-}
-
-
-static void mpu9250_read_raw(int16_t accel[3], int16_t gyro[3], int16_t *temp) {
-    uint8_t buffer[6];
-
-    // Start reading acceleration registers from register 0x3B for 6 bytes
-    read_registers(0x3B, buffer, 6);
-
-    for (int i = 0; i < 3; i++) {
-        accel[i] = (buffer[i * 2] << 8 | buffer[(i * 2) + 1]);
-    }
-
-    // Now gyro data from reg 0x43 for 6 bytes
-    read_registers(0x43, buffer, 6);
-
-    for (int i = 0; i < 3; i++) {
-        gyro[i] = (buffer[i * 2] << 8 | buffer[(i * 2) + 1]);;
-    }
-
-    // Now temperature from reg 0x41 for 2 bytes
-    read_registers(0x41, buffer, 2);
-
-    *temp = buffer[0] << 8 | buffer[1];
-}
-int16_t gyroChanged[3];
-int16_t accelChanged[3];
-void mpu6500Task() {
-    //stdio_init_all();
-
-    // Wait for CDC to be ready
-    // while (!tud_cdc_connected()) {
-    //     sleep_ms(100);
-    // }
-
-    // Send initialization message via CDC
-    tud_cdc_write_str("Hello, MPU9250! Reading raw data from registers via SPI...\n");
-    tud_cdc_write_flush();
-
-    // This example will use SPI0 at 1MHz (提高从0.5MHz到1MHz)
-    spi_init(SPI_PORT, 1000 * 1000);
-    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
-    gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
-    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
-    // Make the SPI pins available to picotool
-    bi_decl(bi_3pins_with_func(PIN_MISO, PIN_MOSI, PIN_SCK, GPIO_FUNC_SPI));
-
-    // Chip select is active-low, so we'll initialise it to a driven-high state
-    gpio_init(PIN_CS);
-    gpio_set_dir(PIN_CS, GPIO_OUT);
-    gpio_put(PIN_CS, 1);
-    // Make the CS pin available to picotool
-    bi_decl(bi_1pin_with_name(PIN_CS, "SPI CS"));
-
-    mpu9250_reset();
-
-    // See if SPI is working - interrograte the device for its I2C ID number, should be 0x71
-    uint8_t id;
-    read_registers(0x75, &id, 1);
+// PAW3205 初始化函数
+void paw3205_init(void) {
+    // 初始化时钟引脚
+    gpio_init(PIN_SCLK);
+    gpio_set_dir(PIN_SCLK, GPIO_OUT);
+    gpio_put(PIN_SCLK, 1);
     
-    char msg_buf[64];
-    snprintf(msg_buf, sizeof(msg_buf), "I2C address is 0x%x\n", id);
-    tud_cdc_write_str(msg_buf);
-    tud_cdc_write_flush();
+    // 初始化数据引脚
+    gpio_init(PIN_SDIO);
+    gpio_set_dir(PIN_SDIO, GPIO_OUT);
+    gpio_put(PIN_SDIO, 0);
+    
+    // 初始化MOTSWK引脚（可选）
+    gpio_init(PIN_MOTSWK);
+    gpio_set_dir(PIN_MOTSWK, GPIO_IN);
+    gpio_pull_up(PIN_MOTSWK); // 启用内部上拉
+    
+    // 传感器初始化序列 - 按照datasheet精确时序
+    gpio_put(PIN_SCLK, 1);
+    gpio_put(PIN_SCLK, 0);
+    sleep_us(1); // tRESYNC = 1us
+    gpio_put(PIN_SCLK, 1);
+    sleep_ms(320); // tSIWTT = 320ms - 等待传感器就绪
+    gpio_put(PIN_SCLK, 0);
+    
+    // 额外等待，确保传感器完全就绪
+    sleep_ms(10);
+    
+    // 禁用睡眠模式
+    paw3205_write_register(OP_MODE, NO_SLEEP);
+    
+    // 等待配置生效
+    sleep_ms(10);
+    
+    // 设置图像质量阈值（可选）
+    paw3205_write_register(IMG_THRESHOLD, 0x10);
+    
+    // 最终等待，确保所有配置生效
+    sleep_ms(50);
+}
 
-    int16_t acceleration[3], gyro[3], temp;
+// PAW3205 读取寄存器函数
+uint8_t paw3205_read_register(uint8_t address) {
+    uint8_t i;
+    uint8_t result = 0;
+    
+    // 设置SDIO为输出模式
+    gpio_set_dir(PIN_SDIO, GPIO_OUT);
+    
+    // 发送地址（8位）- 确保时钟从低电平开始
+    for (i = 128; i > 0; i >>= 1) {
+        gpio_put(PIN_SCLK, 0);
+        gpio_put(PIN_SDIO, (address & i) != 0 ? 1 : 0);
+        sleep_us(1); // 添加小延时确保信号稳定
+        gpio_put(PIN_SCLK, 1);
+        sleep_us(1); // 添加小延时确保信号稳定
+    }
+    
+    // 设置SDIO为输入模式，并添加上拉
+    gpio_set_dir(PIN_SDIO, GPIO_IN);
+    gpio_pull_up(PIN_SDIO);
+    
+    sleep_us(3); // tHOLD = 3us - 等待传感器响应
+    
+    // 读取数据（8位）- 确保时钟从低电平开始
+    for (i = 128; i > 0; i >>= 1) {
+        gpio_put(PIN_SCLK, 0);
+        sleep_us(1); // 确保时钟低电平稳定
+        gpio_put(PIN_SCLK, 1);
+        sleep_us(1); // 确保时钟高电平稳定
+        if (gpio_get(PIN_SDIO)) {
+            result |= i;
+        }
+    }
+    
+    sleep_us(3); // tHOLD = 3us - 最终保持时间
+    
+    return result;
+}
 
+// PAW3205 写入寄存器函数
+void paw3205_write_register(uint8_t address, uint8_t data) {
+    uint8_t i;
+    
+    address |= 0x80; // MSB 表示写模式
+    
+    // 设置SDIO为输出模式
+    gpio_set_dir(PIN_SDIO, GPIO_OUT);
+    
+    // 发送地址（8位）- 确保时钟从低电平开始
+    for (i = 128; i > 0; i >>= 1) {
+        gpio_put(PIN_SCLK, 0);
+        gpio_put(PIN_SDIO, (address & i) != 0 ? 1 : 0);
+        sleep_us(1); // 添加小延时确保信号稳定
+        gpio_put(PIN_SCLK, 1);
+        sleep_us(1); // 添加小延时确保信号稳定
+    }
+    
+    // 发送数据（8位）- 确保时钟从低电平开始
+    for (i = 128; i > 0; i >>= 1) {
+        gpio_put(PIN_SCLK, 0);
+        gpio_put(PIN_SDIO, (data & i) != 0 ? 1 : 0);
+        sleep_us(1); // 添加小延时确保信号稳定
+        gpio_put(PIN_SCLK, 1);
+        sleep_us(1); // 添加小延时确保信号稳定
+    }
+    
+    // 保持时钟低电平
+    gpio_put(PIN_SCLK, 0);
+    sleep_us(100); // 写入后等待时间
+}
+
+// PAW3205 读取运动数据
+void paw3205_read_motion(int8_t *delta_x, int8_t *delta_y, uint8_t *motion_status) {
+    // 首先检查MOTSWK引脚 - 如果为高电平，没有运动
+    if (gpio_get(PIN_MOTSWK)) {
+        *motion_status = 0;
+        *delta_x = 0;
+        *delta_y = 0;
+        return;
+    }
+    // 读取运动状态寄存器
+    *motion_status = paw3205_read_register(MOTION_STATUS);
+    // 检查是否有有效运动 (Arduino代码中检查0x82)
+    if (*motion_status == 0x82) {  // 运动检测位
+        // 读取X和Y位移
+        int8_t dx = (int8_t)paw3205_read_register(DEL_X);
+        int8_t dy = (int8_t)paw3205_read_register(DEL_Y);
+        // 增强异常值过滤：极端跳变值直接丢弃
+        if (dx == (int8_t)0x80 || dy == (int8_t)0x80 || dx == 127 || dx == -127 || dy == 127 || dy == -127) {
+            dx = 0;
+            dy = 0;
+        }
+        *delta_x = dx;
+        *delta_y = dy;
+    } else {
+        *delta_x = 0;
+        *delta_y = 0;
+    }
+}
+
+// 全局变量存储运动数据
+int8_t mouse_delta_x = 0;
+int8_t mouse_delta_y = 0;
+uint8_t mouse_motion_status = 0;
+bool paw3205_debug_enabled = false;  // 调试开关
+
+void paw3205_task(void) {
+    // 初始化PAW3205传感器
+    paw3205_init();
+    // 确保传感器处于活动模式
+    paw3205_write_register(OP_MODE, NO_SLEEP);
+    sleep_ms(10);
+    // 主循环
     while (1) {
-        mpu9250_read_raw(acceleration, gyro, &temp);
-
-        // These are the raw numbers from the chip, so will need tweaking to be really useful.
-        // See the datasheet for more information
-        char data_buf[256];
-        //snprintf(data_buf, sizeof(data_buf), "acc. X = %d, Y = %d, Z = %d\n",acceleration[0], acceleration[1], acceleration[2]);
-        tud_cdc_write_str(data_buf);
-        tud_cdc_write_flush();
-        memcpy(accelChanged, acceleration, sizeof(accelChanged));
-        memcpy(gyroChanged, gyro, sizeof(gyroChanged));
-        sleep_ms(1);  // 从10ms改为1ms，提高读取速度到1000Hz
+        // 读取运动数据
+        paw3205_read_motion(&mouse_delta_x, &mouse_delta_y, &mouse_motion_status);
+        // CDC调试输出
+        if (paw3205_debug_enabled && tud_cdc_connected()) {
+            char dbg[64];
+            snprintf(dbg, sizeof(dbg), "PAW3205: status=0x%02X dx=%d dy=%d\r\n", mouse_motion_status, mouse_delta_x, mouse_delta_y);
+            tud_cdc_write_str(dbg);
+            tud_cdc_write_flush();
+        }
+        // 延时，避免过度占用CPU（适当加大采样间隔）
+        sleep_ms(15);
     }
 }

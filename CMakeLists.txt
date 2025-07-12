@@ -39,6 +39,7 @@ cmake_minimum_required(VERSION 3.13)
 
 add_executable(dev_hid_composite
     main.c
+    mpu9250_spi.c
     usb_descriptors.c
     # hello_usb.c  // 如果你有 hello_usb.c 也可以加进来
 )
@@ -52,6 +53,7 @@ target_include_directories(dev_hid_composite PUBLIC
 # for TinyUSB device support and tinyusb_board for the additional board support library used by the example
 target_link_libraries(dev_hid_composite
     pico_stdlib
+    pico_multicore
     pico_unique_id
     tinyusb_device
     tinyusb_board

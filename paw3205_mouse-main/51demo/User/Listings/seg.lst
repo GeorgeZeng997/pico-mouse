@@ -1,0 +1,108 @@
+C51 COMPILER V9.54   SEG                                                                   12/02/2024 21:16:36 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE SEG
+OBJECT MODULE PLACED IN .\Objects\seg.obj
+COMPILER INVOKED BY: E:\004-Programming\02-Embedded\Keil5\C51\BIN\C51.EXE ..\Dev\seg.c OPTIMIZE(8,SPEED) BROWSE INCDIR(.
+                    -.\Dev;..\Sys;..\User) DEBUG OBJECTEXTEND PRINT(.\Listings\seg.lst) OBJECT(.\Objects\seg.obj)
+
+line level    source
+
+   1          #include "seg.h"
+   2          
+   3          void Seg_Tran(uint8_t *Seg_tring, uint8_t *Seg_buf)
+   4          {
+   5   1              uint8_t i,j;
+   6   1              uint8_t temp;
+   7   1              
+   8   1              for(i=0,j=0; i<=7; i++,j++)
+   9   1              {
+  10   2                      switch(Seg_tring[j])
+  11   2                      {
+  12   3                              case '0':       temp = 0xc0;    break;
+  13   3                              case '1':       temp = 0xf9;    break;
+  14   3                              case '2':       temp = 0xa4;    break;
+  15   3                              case '3':       temp = 0xb0;    break;
+  16   3                              case '4':       temp = 0x99;    break;
+  17   3                              case '5':       temp = 0x92;    break;
+  18   3                              case '6':       temp = 0x82;    break;
+  19   3                              case '7':       temp = 0xf8;    break;
+  20   3                              case '8':       temp = 0x80;    break;
+  21   3                              case '9':       temp = 0x90;    break;
+  22   3                              case 'A':       temp = 0x88;    break;
+  23   3                              case 'b':       temp = 0x83;    break;
+  24   3                              case 'C':       temp = 0xc6;    break;
+  25   3                              case 'd':       temp = 0xa1;    break;
+  26   3                              case 'E':       temp = 0x86;    break;
+  27   3                              case 'F':       temp = 0x8e;    break;
+  28   3                              case '-':       temp = 0xbf;    break;
+  29   3                              
+  30   3                              default :       temp = 0xff;    break;
+  31   3                      }
+  32   2                      
+  33   2                      if(Seg_tring[j+1]=='.')
+  34   2                      {
+  35   3                              temp &= 0x7f;
+  36   3                              j++;
+  37   3                      }
+  38   2                      
+  39   2                      Seg_buf[i] = temp;
+  40   2              }
+  41   1      }       
+  42          
+  43          void Seg_Disp(uint8_t *Seg_buf, uint8_t pos)
+  44          {
+  45   1              //位选消影
+  46   1              P0 = 0xff;
+  47   1              P2 = P2&0x1f|0xc0;
+  48   1              P2 &= 0x1f;
+  49   1              //位选
+  50   1              P0 = 1<<pos;
+  51   1              P2 = P2&0x1f|0xc0;
+  52   1              P2 &= 0x1f;
+  53   1              //段选消影
+  54   1              P0 = 0xff;
+C51 COMPILER V9.54   SEG                                                                   12/02/2024 21:16:36 PAGE 2   
+
+  55   1              P2 = P2&0x1f|0xe0;
+  56   1              P2 &= 0x1f;
+  57   1              //段选
+  58   1              P0 = Seg_buf[pos];
+  59   1              P2 = P2&0x1f|0xe0;
+  60   1              P2 &= 0x1f;
+  61   1      }
+  62          
+  63          
+  64          
+  65          
+  66          
+  67          
+  68          
+  69          
+  70          
+  71          
+  72          
+  73          
+  74          
+  75          
+  76          
+  77          
+  78          
+  79          
+  80          
+  81          
+  82          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    307    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       9
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

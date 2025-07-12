@@ -1,0 +1,82 @@
+C51 COMPILER V9.54   DELAY                                                                 12/31/2024 18:33:18 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE DELAY
+OBJECT MODULE PLACED IN .\Objects\delay.obj
+COMPILER INVOKED BY: E:\004-Programming\02-Embedded\Keil5\C51\BIN\C51.EXE ..\Sys\delay.c OPTIMIZE(8,SPEED) BROWSE INCDIR
+                    -(..\Dev;..\Sys;..\User) DEBUG OBJECTEXTEND PRINT(.\Listings\delay.lst) OBJECT(.\Objects\delay.obj)
+
+line level    source
+
+   1          #include "delay.h"
+   2          
+   3          void Delay1ms(void)     //@11.0592MHz
+   4          {
+   5   1              unsigned char data i, j;
+   6   1      
+   7   1              _nop_();
+   8   1              i = 2;
+   9   1              j = 199;
+  10   1              do
+  11   1              {
+  12   2                      while (--j);
+  13   2              } while (--i);
+  14   1      }
+  15          
+  16          
+  17          void delay_ms(unsigned int ms)
+  18          {                         
+  19   1              while(ms--)
+  20   1          {
+  21   2              Delay1ms();
+  22   2          }
+  23   1      }
+  24          
+  25          //void Delay1us(void)   //@11.0592MHz
+  26          //{
+  27          //      _nop_();
+  28          //}
+  29          
+  30          void delay_us(unsigned int us)
+  31          {                         
+  32   1              while(us--);
+  33   1      //    {
+  34   1      //        Delay1us();
+  35   1      //    }
+  36   1      }
+  37          
+  38          
+  39          
+  40          
+  41          
+  42          
+  43          
+  44          
+  45          
+  46          
+  47          
+  48          
+  49          
+  50          
+  51          
+  52          
+  53          
+  54          
+C51 COMPILER V9.54   DELAY                                                                 12/31/2024 18:33:18 PAGE 2   
+
+  55          
+  56          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     41    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
