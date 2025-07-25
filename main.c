@@ -406,7 +406,7 @@ void hid_task(void)
   static uint32_t start_ms = 0;
   if (board_millis() - start_ms < 1) return;  // 5ms间隔
   start_ms += 1;
-
+  
   // 检查HID设备是否就绪
   if (!tud_hid_ready()) return;
   
@@ -414,7 +414,12 @@ void hid_task(void)
   if (mouse_cmd.has_data){
     tud_hid_mouse_report(REPORT_ID_MOUSE, mouse_cmd.buttons, mouse_cmd.x, mouse_cmd.y, mouse_cmd.wheel, mouse_cmd.pan);
     mouse_cmd.has_data = false;
+    cdc_command_time = board_millis();
   }  // 处理PAW3205传感器数据
+  else if (board_millis() - cdc_command_time < 50) {
+    // 不处理PAW3205等其他输入
+    return;
+  }
   else if (mouse_motion_status == 0x82) {
     // 不使用缩放系数，直接传递原始数据
     int16_t scaled_x = mouse_delta_x * 1;

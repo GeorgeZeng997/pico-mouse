@@ -90,8 +90,11 @@ void paw3205_init(void) {
     sleep_ms(10);
     
     // 设置图像质量阈值（可选）
-    paw3205_write_register(IMG_THRESHOLD, 0x10);
+    //paw3205_write_register(IMG_THRESHOLD, 0xff);
     
+    sleep_ms(10);
+
+    paw3205_write_register(CONF, 0x04);
     // 最终等待，确保所有配置生效
     sleep_ms(50);
 }
@@ -108,29 +111,29 @@ uint8_t paw3205_read_register(uint8_t address) {
     for (i = 128; i > 0; i >>= 1) {
         gpio_put(PIN_SCLK, 0);
         gpio_put(PIN_SDIO, (address & i) != 0 ? 1 : 0);
-        sleep_us(1); // 添加小延时确保信号稳定
+        sleep_us(10); // 添加小延时确保信号稳定
         gpio_put(PIN_SCLK, 1);
-        sleep_us(1); // 添加小延时确保信号稳定
+        sleep_us(10); // 添加小延时确保信号稳定
     }
     
     // 设置SDIO为输入模式，并添加上拉
     gpio_set_dir(PIN_SDIO, GPIO_IN);
     gpio_pull_up(PIN_SDIO);
     
-    sleep_us(3); // tHOLD = 3us - 等待传感器响应
+    sleep_us(30); // tHOLD = 3us - 等待传感器响应
     
     // 读取数据（8位）- 确保时钟从低电平开始
     for (i = 128; i > 0; i >>= 1) {
         gpio_put(PIN_SCLK, 0);
-        sleep_us(1); // 确保时钟低电平稳定
+        sleep_us(10); // 确保时钟低电平稳定
         gpio_put(PIN_SCLK, 1);
-        sleep_us(1); // 确保时钟高电平稳定
+        sleep_us(10); // 确保时钟高电平稳定
         if (gpio_get(PIN_SDIO)) {
             result |= i;
         }
     }
     
-    sleep_us(3); // tHOLD = 3us - 最终保持时间
+    sleep_us(30); // tHOLD = 3us - 最终保持时间
     
     return result;
 }
@@ -138,7 +141,12 @@ uint8_t paw3205_read_register(uint8_t address) {
 // PAW3205 写入寄存器函数
 void paw3205_write_register(uint8_t address, uint8_t data) {
     uint8_t i;
-    
+    // 先取消写保护
+    if ((address & 0x7F) != W_PROTECT) {
+        // 只要不是自己写W_PROTECT寄存器，先解锁
+        paw3205_write_register(W_PROTECT, 0x5A);
+        sleep_ms(10);
+    }
     address |= 0x80; // MSB 表示写模式
     
     // 设置SDIO为输出模式
@@ -148,25 +156,29 @@ void paw3205_write_register(uint8_t address, uint8_t data) {
     for (i = 128; i > 0; i >>= 1) {
         gpio_put(PIN_SCLK, 0);
         gpio_put(PIN_SDIO, (address & i) != 0 ? 1 : 0);
-        sleep_us(1); // 添加小延时确保信号稳定
+        sleep_us(10); // 添加小延时确保信号稳定
         gpio_put(PIN_SCLK, 1);
-        sleep_us(1); // 添加小延时确保信号稳定
+        sleep_us(10); // 添加小延时确保信号稳定
     }
     
     // 发送数据（8位）- 确保时钟从低电平开始
     for (i = 128; i > 0; i >>= 1) {
         gpio_put(PIN_SCLK, 0);
         gpio_put(PIN_SDIO, (data & i) != 0 ? 1 : 0);
-        sleep_us(1); // 添加小延时确保信号稳定
+        sleep_us(10); // 添加小延时确保信号稳定
         gpio_put(PIN_SCLK, 1);
-        sleep_us(1); // 添加小延时确保信号稳定
+        sleep_us(10); // 添加小延时确保信号稳定
     }
     
     // 保持时钟低电平
     gpio_put(PIN_SCLK, 0);
     sleep_us(100); // 写入后等待时间
 }
-
+// 全局变量存储运动数据
+int8_t mouse_delta_x = 0;
+int8_t mouse_delta_y = 0;
+uint8_t mouse_motion_status = 0;
+bool paw3205_debug_enabled = false;  // 调试开关
 // PAW3205 读取运动数据
 void paw3205_read_motion(int8_t *delta_x, int8_t *delta_y, uint8_t *motion_status) {
     // 首先检查MOTSWK引脚 - 如果为高电平，没有运动
@@ -184,10 +196,21 @@ void paw3205_read_motion(int8_t *delta_x, int8_t *delta_y, uint8_t *motion_statu
         int8_t dx = (int8_t)paw3205_read_register(DEL_X);
         int8_t dy = (int8_t)paw3205_read_register(DEL_Y);
         // 增强异常值过滤：极端跳变值直接丢弃
-        if (dx == (int8_t)0x80 || dy == (int8_t)0x80 || dx == 127 || dx == -127 || dy == 127 || dy == -127) {
-            dx = 0;
-            dy = 0;
-        }
+        // if (dx == (int8_t)0x80 || dy == (int8_t)0x80 || dx == 127 || dx == -127 || dy == 127 || dy == -127) {
+        //     dx = 0;
+        //     dy = 0;
+        // }
+        // // 滤掉异常大跳变并通过CDC打印
+        // if (dx > 50 || dx < -50 || dy > 50 || dy < -50) {
+        //     if (paw3205_debug_enabled && tud_cdc_connected()) {
+        //         char dbg[64];
+        //         snprintf(dbg, sizeof(dbg), "异常跳变: dx=%d dy=%d\r\n", dx, dy);
+        //         tud_cdc_write_str(dbg);
+        //         tud_cdc_write_flush();
+        //     }
+        //     dx = 0;
+        //     dy = 0;
+        // }
         *delta_x = dx;
         *delta_y = dy;
     } else {
@@ -196,11 +219,7 @@ void paw3205_read_motion(int8_t *delta_x, int8_t *delta_y, uint8_t *motion_statu
     }
 }
 
-// 全局变量存储运动数据
-int8_t mouse_delta_x = 0;
-int8_t mouse_delta_y = 0;
-uint8_t mouse_motion_status = 0;
-bool paw3205_debug_enabled = false;  // 调试开关
+
 
 void paw3205_task(void) {
     // 初始化PAW3205传感器
