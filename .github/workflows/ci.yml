@@ -1,0 +1,120 @@
+name: Pico-Mouse Firmware CI/CD
+
+on:
+  push:
+    branches:
+      - master
+      - pico-paw
+      - joystick-adc
+      - gyro-mpu6500
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - master
+      - pico-paw
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  static-check:
+    name: Static Analysis & Hygiene Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for tracked build artifacts
+        run: |
+          if git ls-files | grep -E '\.(uf2|elf|bin|hex|obj|lst)$'; then
+            echo "::error::Tracked binary build artifacts detected in repository!"
+            exit 1
+          fi
+          echo "Repository file hygiene check passed."
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck static analysis
+        run: |
+          if [ -d "src" ]; then
+            cppcheck --enable=warning,performance,portability --error-exitcode=1 \
+              --suppress=missingIncludeSystem --inline-suppr -I inc src/
+          else
+            cppcheck --enable=warning,performance,portability --error-exitcode=1 \
+              --suppress=missingIncludeSystem --inline-suppr .
+          fi
+
+  build-firmware:
+    name: Build RP2040 UF2 Firmware
+    needs: static-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ARM GCC toolchain & Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib ninja-build python3
+
+      - name: Cache Raspberry Pi Pico SDK
+        id: cache-pico-sdk
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pico-sdk
+          key: pico-sdk-2.1.1-tinyusb
+
+      - name: Clone Pico SDK 2.1.1
+        if: steps.cache-pico-sdk.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch 2.1.1 --depth 1 https://github.com/raspberrypi/pico-sdk.git ${{ runner.temp }}/pico-sdk
+          cd ${{ runner.temp }}/pico-sdk
+          git submodule update --init --depth 1 lib/tinyusb
+
+      - name: Configure & Build Firmware (CMake + Ninja)
+        env:
+          PICO_SDK_PATH: ${{ runner.temp }}/pico-sdk
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Print Firmware Size Summary
+        run: |
+          arm-none-eabi-size build/dev_hid_composite.elf
+          ls -lh build/*.uf2 build/*.elf build/*.bin
+
+      - name: Upload UF2 Firmware Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pico-mouse-firmware-${{ github.ref_name }}-${{ github.sha }}
+          path: |
+            build/dev_hid_composite.uf2
+            build/dev_hid_composite.elf
+            build/dev_hid_composite.bin
+            build/dev_hid_composite.hex
+            build/dev_hid_composite.elf.map
+          if-no-files-found: error
+
+  release:
+    name: Publish Firmware Release
+    needs: build-firmware
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Firmware Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pico-mouse-firmware-${{ github.ref_name }}-${{ github.sha }}
+          path: release_assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release_assets/dev_hid_composite.uf2
+            release_assets/dev_hid_composite.bin
+            release_assets/dev_hid_composite.elf

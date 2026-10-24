@@ -1,2 +1,23 @@
-build
+# CMake & Ninja Build Artifacts
+build/
+cmake-build-*/
+.ninja_*
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Firmware Binary Outputs
+*.uf2
+*.elf
+*.elf.map
+*.bin
+*.hex
+*.dis
+
+# Third-party reference archives & 8051 Keil build outputs
+paw3205_mouse-main/
+
+# Keep VSCode config except auto-generated cmake copy
 !.vscode/*
+.vscode/pico_sdk_import.cmake
