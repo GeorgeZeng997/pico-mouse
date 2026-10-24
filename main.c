@@ -105,20 +105,26 @@ void mouse_buttons_init(void) {
 }
 
 // 读取鼠标按键状态
-uint8_t read_mouse_buttons(void) {
-    uint8_t buttons = 0;
-    
-    // 读取左键状态 (按下时为低电平，所以需要取反)
-    if (!gpio_get(MOUSE_LEFT_BUTTON_PIN)) {
-        buttons |= 0x01;  // 左键位
+uint8_t read_mouse_buttons(void)
+{
+      static uint8_t last_raw = 0;
+    static uint8_t stable = 0;
+    static uint32_t last_change = 0;
+    const uint32_t debounce_ms = 10; // 可调消抖时间
+
+    uint8_t raw = 0;
+    if (!gpio_get(MOUSE_LEFT_BUTTON_PIN))  raw |= 0x01;
+    if (!gpio_get(MOUSE_RIGHT_BUTTON_PIN)) raw |= 0x02;
+
+    uint32_t now = board_millis();
+    if (raw != last_raw) {
+        last_change = now;
+        last_raw = raw;
     }
-    
-    // 读取右键状态 (按下时为低电平，所以需要取反)
-    if (!gpio_get(MOUSE_RIGHT_BUTTON_PIN)) {
-        buttons |= 0x02;  // 右键位
+    if ((now - last_change) > debounce_ms && stable != last_raw) {
+        stable = last_raw;
     }
-    
-    return buttons;
+    return stable;
 }
 
 // 摇杆初始化函数
@@ -403,6 +409,7 @@ static void send_hid_report(uint8_t report_id, uint32_t btn)
 
 void hid_task(void)
 {
+  uint8_t buttons = read_mouse_buttons();
   static uint32_t start_ms = 0;
   if (board_millis() - start_ms < 1) return;  // 5ms间隔
   start_ms += 1;
@@ -422,8 +429,8 @@ void hid_task(void)
   }
   else if (mouse_motion_status == 0x82) {
     // 不使用缩放系数，直接传递原始数据
-    int16_t scaled_x = mouse_delta_x * 1;
-    int16_t scaled_y = -mouse_delta_y * 1;  // Y轴反转但不缩放
+    int16_t scaled_x = mouse_delta_x * 1.5;
+    int16_t scaled_y = -mouse_delta_y * 1.5;  // Y轴反转但不缩放
     
     // 限制范围在int8_t有效范围内 (-127 到 +127)
     int8_t send_x = 0;
@@ -438,7 +445,7 @@ void hid_task(void)
     else send_y = (int8_t)scaled_y;
     
     // 读取鼠标按键状态
-    uint8_t buttons = read_mouse_buttons();
+    
     
     // 发送鼠标移动报告
     tud_hid_mouse_report(REPORT_ID_MOUSE, buttons, send_x, send_y, 0, 0);
@@ -449,12 +456,12 @@ void hid_task(void)
   // 处理仅按键状态变化（无运动时）
   else {
     static uint8_t last_buttons = 0;
-    uint8_t current_buttons = read_mouse_buttons();
+    //uint8_t current_buttons = read_mouse_buttons();
     
     // 如果按键状态发生变化，发送鼠标报告
-    if (current_buttons != last_buttons) {
-      tud_hid_mouse_report(REPORT_ID_MOUSE, current_buttons, 0, 0, 0, 0);
-      last_buttons = current_buttons;
+    if (buttons != last_buttons) {
+      tud_hid_mouse_report(REPORT_ID_MOUSE, buttons, 0, 0, 0, 0);
+      last_buttons = buttons;
     }
   }
   //mouse_delta_x = mouse_delta_y = 0;  // 重置移动数据
